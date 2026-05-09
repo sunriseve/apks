@@ -506,7 +506,7 @@
             var season = decoded.s;
             var episode = decoded.e;
 
-            // Build stream URL
+            // Build stream URL based on Stremio protocol
             var streamUrl;
             if ((type === "series" || type === "anime" || type === "hentai") && season > 0 && episode > 0) {
                 streamUrl = addonUrl + "/stream/" + type + "/" + encodeURIComponent(id) + ":" + season + ":" + episode + ".json";
@@ -523,18 +523,20 @@
                     var quality = extractQuality(stream.name || stream.title || stream.description || stream.url || "");
                     var title = stream.title || stream.name || "";
 
-                    // 1) DIRECT URL STREAMS (HLS/MP4) - BEST QUALITY
+                    // --- 1) DIRECT URL STREAMS (HLS/MP4/DASH) ---
+                    // These have a playable HTTP(S) URL
                     if (stream.url && isValidHttpUrl(stream.url)) {
                         var headers = { "Referer": addonUrl + "/", "User-Agent": USER_AGENT };
-                        if (stream.behaviorHints) {
-                            if (stream.behaviorHints.proxyHeaders && stream.behaviorHints.proxyHeaders.request) {
-                                headers = Object.assign(headers, stream.behaviorHints.proxyHeaders.request);
-                            } else if (stream.behaviorHints.headers) {
-                                headers = Object.assign(headers, stream.behaviorHints.headers);
-                            }
+                        var bh = stream.behaviorHints || {};
+
+                        // Merge headers from behaviorHints (addon-specific headers)
+                        if (bh.proxyHeaders && bh.proxyHeaders.request) {
+                            headers = Object.assign(headers, bh.proxyHeaders.request);
+                        } else if (bh.headers) {
+                            headers = Object.assign(headers, bh.headers);
                         }
 
-                        // Add Origin header for HLS streams
+                        // Add Origin header for streaming protocols (HLS/DASH)
                         if (stream.url.indexOf(".m3u8") !== -1 || stream.url.indexOf(".mpd") !== -1) {
                             if (!headers["Origin"]) {
                                 try {
@@ -544,87 +546,130 @@
                             }
                         }
 
+                        // Build subtitle objects
+                        var subtitles = undefined;
+                        if (stream.subtitles && Array.isArray(stream.subtitles) && stream.subtitles.length > 0) {
+                            subtitles = stream.subtitles.map(function(sub) {
+                                return { url: sub.url, lang: sub.lang || "Unknown" };
+                            });
+                        }
+
                         streams.push(new StreamResult({
                             url: stream.url,
                             quality: quality,
                             source: addonName + " " + quality,
+                            title: title,
                             headers: headers,
-                            subtitles: stream.subtitles ? stream.subtitles.map(function(sub) {
-                                return { url: sub.url, lang: sub.lang || "Unknown" };
-                            }) : undefined
+                            subtitles: subtitles,
+                            behaviorHints: bh,
+                            cached: stream.cached || false,
+                            size: stream.size || null
                         }));
                         return;
                     }
 
-                    // 2) TORRENT INFOHASH - SkyStream native format: torrent:infoHash:fileIdx
+                    // --- 2) TORRENT STREAMS (infoHash) ---
+                    // SkyStream needs infoHash + fileIndex as DIRECT properties on StreamResult
                     if (stream.infoHash) {
-                        // Build magnet URL with trackers if available
-                        var magnetUrl = "magnet:?xt=urn:btih:" + stream.infoHash;
+                        var infoHash = stream.infoHash;
+                        var fileIdx = stream.fileIdx !== undefined ? stream.fileIdx : 0;
 
-                        // Add trackers if the addon provided them
+                        // Build magnet URL with trackers
+                        var magnetUrl = "magnet:?xt=urn:btih:" + infoHash;
                         if (stream.sources && Array.isArray(stream.sources)) {
                             stream.sources.forEach(function(tr) {
                                 magnetUrl += "&tr=" + encodeURIComponent(tr);
                             });
                         }
-
-                        // Try the URL field if it exists (might be a magnet URL already)
-                        var streamUrl = stream.url || "";
-
-                        // Use torrent: prefix for native SkyStream torrent support
-                        if (stream.fileIdx !== undefined) {
-                            // torrserver format: torrent:infoHash:fileIdx
-                            streams.push(new StreamResult({
-                                url: "torrent:" + stream.infoHash + ":" + stream.fileIdx,
-                                quality: quality,
-                                source: addonName + " " + quality,
-                                title: title,
-                                headers: { "User-Agent": USER_AGENT, "Referer": addonUrl + "/" },
-                                cached: stream.cached || false,
-                                size: stream.size || null
-                            }));
+                        // Add default public trackers as fallback
+                        if (!stream.sources || stream.sources.length === 0) {
+                            var defaultTrackers = [
+                                "udp://tracker.opentrackr.org:1337/announce",
+                                "udp://tracker.openbittorrent.com:6969/announce",
+                                "udp://tracker.torrent.eu.org:451/announce",
+                                "udp://public.popcorn-tracker.org:6969/announce",
+                                "udp://exodus.desync.com:6969/announce"
+                            ];
+                            defaultTrackers.forEach(function(tr) {
+                                magnetUrl += "&tr=" + encodeURIComponent(tr);
+                            });
                         }
 
-                        // Also add magnet URL for clients that support it
+                        // Shared props for all torrent stream formats
+                        var torrentProps = {
+                            quality: quality,
+                            source: addonName + " " + quality,
+                            title: title,
+                            headers: { "User-Agent": USER_AGENT, "Referer": addonUrl + "/" },
+                            infoHash: infoHash,
+                            fileIndex: fileIdx,
+                            cached: stream.cached || false,
+                            size: stream.size || null,
+                            behaviorHints: stream.behaviorHints || { notWebReady: true }
+                        };
+
+                        // Format 1: SkyStream-native torrent format (torrent:infoHash:fileIdx)
+                        streams.push(new StreamResult(Object.assign({}, torrentProps, {
+                            url: "torrent:" + infoHash + ":" + fileIdx
+                        })));
+
+                        // Format 2: Magnet URL with trackers (for external clients)
                         if (magnetUrl.length > 20) {
-                            streams.push(new StreamResult({
-                                url: magnetUrl,
-                                quality: quality,
-                                source: addonName + " " + quality,
-                                title: title,
-                                headers: { "User-Agent": USER_AGENT, "Referer": addonUrl + "/" },
-                                cached: stream.cached || false,
-                                size: stream.size || null
-                            }));
+                            streams.push(new StreamResult(Object.assign({}, torrentProps, {
+                                url: magnetUrl
+                            })));
                         }
                         return;
                     }
 
-                    // 3) YOUTUBE
+                    // --- 3) YOUTUBE EMBEDS ---
                     if (stream.ytId) {
                         streams.push(new StreamResult({
                             url: "https://www.youtube.com/watch?v=" + stream.ytId,
                             quality: "YouTube",
                             source: "YouTube",
-                            headers: { "Referer": "https://www.youtube.com/", "User-Agent": USER_AGENT }
+                            headers: { "Referer": "https://www.youtube.com/", "User-Agent": USER_AGENT },
+                            behaviorHints: { notWebReady: true }
                         }));
                         return;
                     }
 
-                    // 4) FALLBACK: If stream has a url that we didn't handle above
+                    // --- 4) FALLBACK: Magnet URL or other format ---
+                    // Try to extract infoHash from magnet URLs if present
                     if (stream.url) {
-                        streams.push(new StreamResult({
-                            url: stream.url,
+                        var fallbackUrl = stream.url;
+                        var fallbackInfoHash = null;
+                        var fallbackFileIdx = 0;
+
+                        // Check if URL is a magnet link and extract infoHash
+                        if (fallbackUrl.indexOf("magnet:?xt=urn:btih:") === 0) {
+                            var match = fallbackUrl.match(/urn:btih:([a-fA-F0-9]+)/);
+                            if (match) {
+                                fallbackInfoHash = match[1].toLowerCase();
+                            }
+                        }
+
+                        var streamResultProps = {
+                            url: fallbackUrl,
                             quality: quality,
                             source: addonName + " " + (stream.name || ""),
                             title: title,
-                            headers: { "User-Agent": USER_AGENT, "Referer": addonUrl + "/" }
-                        }));
+                            headers: { "User-Agent": USER_AGENT, "Referer": addonUrl + "/" },
+                            behaviorHints: stream.behaviorHints || undefined
+                        };
+
+                        // Add infoHash/fileIndex if extracted from magnet URL
+                        if (fallbackInfoHash) {
+                            streamResultProps.infoHash = fallbackInfoHash;
+                            streamResultProps.fileIndex = fallbackFileIdx;
+                        }
+
+                        streams.push(new StreamResult(streamResultProps));
                     }
                 });
             }
 
-            // Deduplicate streams by URL
+            // Deduplicate streams by URL (keep first occurrence = best quality order)
             var seen = {};
             streams = streams.filter(function(s) {
                 var key = s.url;
@@ -633,24 +678,16 @@
                 return true;
             });
 
-            // Sort by quality (highest first)
+            // Sort by quality (highest first): 4K > 2160p > 1440p > 1080p > 720p > 480p > 360p > Auto > YouTube
             streams.sort(function(a, b) {
-                var qMap = { "4K": 0, "2160p": 0, "1440p": 1, "1080p": 2, "720p": 3, "480p": 4, "360p": 5, "Auto": 6, "YouTube": 7, "N/A": 8 };
+                var qMap = { "4K": 0, "2160p": 0, "1440p": 1, "1080p": 2, "720p": 3, "480p": 4, "360p": 5, "Auto": 6, "YouTube": 7 };
                 var aQ = qMap[a.quality] || 6;
                 var bQ = qMap[b.quality] || 6;
                 return aQ - bQ;
             });
 
-            if (streams.length === 0) {
-                // Check if the addon requires configuration
-                streams.push(new StreamResult({
-                    url: "",
-                    quality: "N/A",
-                    source: addonName + " - No streams returned. Try another source.",
-                    headers: {}
-                }));
-            }
-
+            // If no streams found, return empty array rather than fake entry
+            // SkyStream will show "No streams available" natively
             cb({ success: true, data: streams });
         } catch (e) {
             console.error("loadStreams error:", e.message);
