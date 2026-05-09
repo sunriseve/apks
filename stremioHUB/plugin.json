@@ -1,0 +1,19 @@
+{
+  "packageName": "dev.sunriseve.stremiohub",
+  "name": "StremioHub",
+  "version": 1,
+  "baseUrl": "https://stremio-hub.local",
+  "description": "Aggregated content hub from multiple Stremio add-ons. Add/remove manifest.json URLs to configure sources. First addon = highest priority in getHome catalog.",
+  "authors": ["sunriseve"],
+  "languages": ["en"],
+  "categories": ["Movies", "Anime", "Adult"],
+  "isAdult": true,
+  "addons": [
+    "https://dirty-pink.ers.pw/manifest.json",
+    "https://07b88951aaab-jaxxx-v2.baby-beamup.club/manifest.json",
+    "https://streamio-hianime.onrender.com/manifest.json",
+    "https://xclub-stremio.vercel.app/manifest.json",
+    "https://hentaistream-addon.keypop3750.workers.dev/manifest.json",
+    "https://yomi.ruka.pw/manifest.json"
+  ]
+}
