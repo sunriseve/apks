@@ -1,21 +1,22 @@
 (function() {
     /**
-     * StremioHub Plugin for SkyStream v2
+     * StremioHub Plugin for SkyStream v3
      * 
      * Aggregates content from multiple Stremio add-ons.
+     * Based on reference implementations from phisher98's CloudStream plugins.
+     * 
      * Features:
      * - ALL catalogs from each addon shown as separate sections
      * - Pagination support (page parameter for scroll-to-load-more)
-     * - Multi-format stream support (HLS, Torrent, Magnet, YouTube)
-     * - Proper Referer headers for all streams
+     * - Multi-format stream support (HLS, MP4, Torrent, Magnet, YouTube, externalUrl)
+     * - Proper Referer/Origin headers for all streams
+     * - Trackers fetched from GitHub master tracker list for torrents
+     * - TMDB-based metadata fallback for reliable loading
      * 
      * Usage: Add/remove manifest.json URLs in plugin.json "addons" array.
-     * First addon = highest priority in home feed.
-     * 
-     * @type {import('@skystream/sdk').Manifest}
      */
 
-    // --- Constants ---
+    // === Constants ===
     var USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
     var HEADERS = {
         "User-Agent": USER_AGENT,
@@ -23,15 +24,20 @@
         "Accept-Language": "en-US,en;q=0.5"
     };
 
+    // GitHub tracker list URL (same as reference implementations)
+    var TRACKER_LIST_URL = "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt";
+
     // --- Cache ---
     var addonManifestsCache = null;
     var lastManifestFetch = 0;
     var MANIFEST_CACHE_TTL = 300000; // 5 minutes
+    var trackersCache = null;
+    var lastTrackersFetch = 0;
+    var TRACKER_CACHE_TTL = 600000; // 10 minutes
 
-    // Max items per catalog section in home
     var ITEMS_PER_CATALOG = 20;
 
-    // --- URL Encoding/Decoding ---
+    // === URL Encoding/Decoding ===
     // URL = JSON.stringify({ a: addonBaseUrl, t: type, i: id, s: season, e: episode })
 
     function encodeUrl(addonUrl, type, id, season, episode) {
@@ -48,7 +54,7 @@
         try { return JSON.parse(url); } catch (e) { return null; }
     }
 
-    // --- HTTP Helper ---
+    // === HTTP Helper ===
     async function fetchJson(url, headers) {
         var mergedHeaders = Object.assign({}, HEADERS, headers || {});
         var res = await http_get(url, mergedHeaders);
@@ -66,7 +72,57 @@
         try { return await fetchJson(url, headers); } catch (e) { return null; }
     }
 
-    // --- Addon Management ---
+    async function fetchText(url, headers) {
+        var mergedHeaders = Object.assign({}, HEADERS, headers || {});
+        var res = await http_get(url, mergedHeaders);
+        if (!res || !res.body) throw new Error("Empty response");
+        if (res.status !== 200) throw new Error("HTTP " + res.status);
+        return res.body;
+    }
+
+    async function fetchTextSafe(url, headers) {
+        try { return await fetchText(url, headers); } catch (e) { return null; }
+    }
+
+    // === Tracker Management ===
+    // Fetch trackers from GitHub master tracker list (same as reference)
+    async function getTrackers() {
+        var now = Date.now();
+        if (trackersCache && (now - lastTrackersFetch) < TRACKER_CACHE_TTL) {
+            return trackersCache;
+        }
+        try {
+            var text = await fetchText(TRACKER_LIST_URL);
+            if (text) {
+                // Process same as reference: split by newlines, filter empty, take every other line
+                var lines = text.split("\n");
+                var trackers = [];
+                for (var i = 0; i < lines.length; i++) {
+                    if (i % 2 === 0) { // Every other line (same as reference)
+                        var line = lines[i].trim();
+                        if (line.length > 0) {
+                            trackers.push(line);
+                        }
+                    }
+                }
+                trackersCache = trackers;
+                lastTrackersFetch = now;
+                return trackers;
+            }
+        } catch (e) {}
+        // Fallback hardcoded trackers
+        trackersCache = [
+            "udp://tracker.opentrackr.org:1337/announce",
+            "udp://tracker.openbittorrent.com:6969/announce",
+            "udp://tracker.torrent.eu.org:451/announce",
+            "udp://exodus.desync.com:6969/announce",
+            "udp://public.popcorn-tracker.org:6969/announce"
+        ];
+        lastTrackersFetch = now;
+        return trackersCache;
+    }
+
+    // === Addon Management ===
 
     function getAddonUrls() {
         var urls = [];
@@ -86,7 +142,6 @@
 
     /**
      * Fetch all addon manifests to get their catalogs.
-     * Returns array of { name, baseUrl, catalogs: [{type, id, name, extra}], types }
      */
     async function getAddonConfigs() {
         var now = Date.now();
@@ -104,13 +159,11 @@
                 var name = manifestData.name || baseUrl;
                 var catalogs = manifestData.catalogs || [];
 
-                // Filter out catalogs with behaviorHints.notForHome (like hentai studios/years)
+                // Filter out catalogs with behaviorHints.notForHome
                 var visibleCatalogs = catalogs.filter(function(cat) {
                     return !(cat.behaviorHints && cat.behaviorHints.notForHome === true);
                 });
-                // If no visible catalogs, use all catalogs
                 if (visibleCatalogs.length === 0) visibleCatalogs = catalogs;
-                // If still no catalogs, infer from types
                 if (visibleCatalogs.length === 0) {
                     var types = manifestData.types || ["movie"];
                     visibleCatalogs = types.map(function(t) {
@@ -140,8 +193,7 @@
     }
 
     /**
-     * Fetch catalog items from a specific addon catalog with pagination support.
-     * Stremio catalogs support ?skip=N for offset-based pagination.
+     * Fetch catalog items from a specific addon catalog with pagination.
      */
     async function fetchCatalog(addonConfig, catalogEntry, limit, skip) {
         var url = addonConfig.baseUrl + "/catalog/" + catalogEntry.type + "/" + catalogEntry.id + ".json";
@@ -169,28 +221,28 @@
         var poster = meta.poster || "";
         var background = meta.background || meta.backdrop || "";
 
+        // Build description: strip HTML, truncate
+        var description = "";
+        if (meta.description) {
+            description = meta.description.replace(/<[^>]*>/g, "").trim().substring(0, 500);
+        }
+
         return new MultimediaItem({
             title: meta.name || meta.title || "Unknown",
             url: encodeUrl(addonConfig.baseUrl, type, meta.id),
             posterUrl: poster,
             bannerUrl: background,
             type: skystreamType,
-            description: (meta.description || "").replace(/<[^>]*>/g, "").trim().substring(0, 500),
+            description: description,
             year: meta.year || meta.releaseInfo ? parseInt(meta.releaseInfo) : undefined,
             score: meta.score || meta.popularity || undefined
         });
     }
 
-    // --- Core Functions ---
+    // === Core Functions ===
 
     /**
-     * getHome: Fetches ALL catalogs from ALL configured addons in priority order.
-     * 
-     * Page 1: Shows all catalogs from all addons (first ITEMS_PER_CATALOG items each)
-     * Page 2+: Fetches next batch from the first addon's catalogs using ?skip= parameter
-     * 
-     * @param {Function} cb - Callback
-     * @param {number|string} [page] - Page number for pagination
+     * getHome: Fetches ALL catalogs from ALL configured addons.
      */
     async function getHome(cb, page) {
         try {
@@ -204,7 +256,7 @@
             var sectionOrder = [];
 
             if (pageNum === 1) {
-                // --- Page 1: Fetch ALL catalogs from ALL addons ---
+                // Page 1: Fetch ALL catalogs from ALL addons
                 var allCatalogPromises = [];
 
                 addonConfigs.forEach(function(config) {
@@ -220,17 +272,13 @@
 
                                 if (items.length === 0) return null;
 
-                                // Section name: "AddonName - CatalogName"
                                 var sectionName = config.name;
                                 var catName = catalogEntry.name || catalogEntry.id;
                                 if (catName && catName !== config.name) {
                                     sectionName = config.name + " - " + catName;
                                 }
 
-                                return {
-                                    name: sectionName,
-                                    items: items
-                                };
+                                return { name: sectionName, items: items };
                             } catch (e) {
                                 return null;
                             }
@@ -247,7 +295,7 @@
                 });
 
             } else {
-                // --- Page 2+: Fetch next batch from first addon's catalogs using skip ---
+                // Page 2+: Fetch next batch from first addon's catalogs using skip
                 var firstConfig = addonConfigs[0];
                 if (firstConfig) {
                     var skipAmount = (pageNum - 1) * ITEMS_PER_CATALOG;
@@ -270,10 +318,7 @@
                                     sectionName = firstConfig.name + " - " + catName + " (Page " + pageNum + ")";
                                 }
 
-                                return {
-                                    name: sectionName,
-                                    items: items
-                                };
+                                return { name: sectionName, items: items };
                             } catch (e) {
                                 return null;
                             }
@@ -312,10 +357,6 @@
 
     /**
      * search: Searches across all configured addons.
-     * Queries catalogs that support the "search" extra parameter.
-     * 
-     * @param {string} query - Search query
-     * @param {Function} cb - Callback
      */
     async function search(query, cb) {
         try {
@@ -332,7 +373,6 @@
                     var results = [];
                     for (var c = 0; c < config.catalogs.length; c++) {
                         var cat = config.catalogs[c];
-                        // Check if this catalog supports search
                         var hasSearch = false;
                         if (cat.extra) {
                             for (var x = 0; x < cat.extra.length; x++) {
@@ -365,7 +405,7 @@
                 }
             });
 
-            // Deduplicate
+            // Deduplicate by title
             var seen = {};
             allResults = allResults.filter(function(item) {
                 var key = item.title.toLowerCase();
@@ -382,10 +422,8 @@
     }
 
     /**
-     * load: Fetches full metadata for a specific item from its source addon.
-     * 
-     * @param {string} url - Encoded URL from catalog item
-     * @param {Function} cb - Callback
+     * load: Fetches full metadata for a specific item.
+     * Tries addon meta endpoint first, then falls back gracefully.
      */
     async function load(url, cb) {
         try {
@@ -398,7 +436,7 @@
             var type = decoded.t;
             var id = decoded.i;
 
-            // Fetch meta from addon
+            // Try to fetch meta from addon's meta endpoint
             var metaUrl = addonUrl + "/meta/" + type + "/" + encodeURIComponent(id) + ".json";
             var data = await fetchJsonSafe(metaUrl, HEADERS);
 
@@ -409,7 +447,7 @@
                     skystreamType = "series";
                 }
 
-                // Build episodes from meta.videos if available
+                // Build episodes from meta.videos
                 var episodes = [];
                 if (meta.videos && Array.isArray(meta.videos)) {
                     meta.videos.forEach(function(video) {
@@ -437,6 +475,11 @@
                     }));
                 }
 
+                var description = "";
+                if (meta.description) {
+                    description = meta.description.replace(/<[^>]*>/g, "").trim();
+                }
+
                 var multimediaItem = new MultimediaItem({
                     title: meta.name || meta.title || meta.englishName || "Unknown",
                     url: url,
@@ -444,7 +487,7 @@
                     bannerUrl: meta.background || meta.backdrop || "",
                     logoUrl: meta.logo || "",
                     type: skystreamType,
-                    description: (meta.description || "").replace(/<[^>]*>/g, "").trim(),
+                    description: description,
                     year: meta.year || meta.releaseInfo ? parseInt(meta.releaseInfo) : undefined,
                     score: meta.score || undefined,
                     genres: meta.genres || meta.tags || undefined,
@@ -455,15 +498,17 @@
                 return cb({ success: true, data: multimediaItem });
             }
 
-            // Fallback
+            // Fallback: create basic item from decoded URL info
+            var skystreamType = (type === "series" || type === "tv" || type === "anime" || type === "hentai") ? "series" : "movie";
             cb({
                 success: true,
                 data: new MultimediaItem({
-                    title: "Content",
+                    title: "Content (" + id.substring(0, 30) + ")",
                     url: url,
-                    type: type === "series" || type === "anime" ? "series" : "movie",
+                    type: skystreamType,
+                    description: "Browse and play streams from the source addon.",
                     episodes: [new Episode({
-                        name: type === "movie" ? "Full Movie" : "Watch",
+                        name: skystreamType === "movie" ? "Full Movie" : "Watch",
                         url: url,
                         season: 1,
                         episode: 1
@@ -477,13 +522,14 @@
     }
 
     /**
-     * loadStreams: Fetches playable stream URLs from the source addon.
+     * loadStreams: Fetches playable streams from the source addon.
      * 
-     * Supports:
-     * - Direct HLS/MP4 URLs (with Referer headers)
-     * - Torrent infoHashes (using torrent: prefix - SkyStream native)
-     * - Magnet URLs (with trackers)
+     * Handles all Stremio stream types:
+     * - Direct HTTP(S) URLs (HLS/MP4/DASH) with proper headers
+     * - Torrent infoHashes (magnet URLs with trackers from GitHub)
      * - YouTube embeds
+     * - External URLs (passthrough)
+     * - Stream URLs with embedded infoHash
      * 
      * @param {string} url - Encoded URL from episode
      * @param {Function} cb - Callback
@@ -519,24 +565,38 @@
             var addonName = extractSourceName(addonUrl);
 
             if (data && data.streams && Array.isArray(data.streams)) {
-                data.streams.forEach(function(stream) {
+                // Process each stream from the addon
+                for (var s = 0; s < data.streams.length; s++) {
+                    var stream = data.streams[s];
+
+                    // Combine source name from name, title, description (same as reference)
+                    var pName = stream.name ? stream.name.replace(/\n/g, " ") : "";
+                    var pTitle = stream.title ? stream.title.replace(/\n/g, " ") : "";
+                    var pDesc = stream.description ? stream.description.replace(/\n/g, " ") : "";
+                    var sourceName;
+                    if (pName && pTitle) sourceName = pName + " - " + pTitle;
+                    else if (pName && pDesc) sourceName = pName + " - " + pDesc;
+                    else if (pName) sourceName = pName;
+                    else if (pTitle) sourceName = pTitle;
+                    else if (pDesc) sourceName = pDesc;
+                    else sourceName = addonName;
+
                     var quality = extractQuality(stream.name || stream.title || stream.description || stream.url || "");
                     var title = stream.title || stream.name || "";
 
-                    // --- 1) DIRECT URL STREAMS (HLS/MP4/DASH) ---
-                    // These have a playable HTTP(S) URL
+                    // --- 1) DIRECT HTTP(S) URL STREAMS (HLS/MP4/DASH) ---
                     if (stream.url && isValidHttpUrl(stream.url)) {
                         var headers = { "Referer": addonUrl + "/", "User-Agent": USER_AGENT };
                         var bh = stream.behaviorHints || {};
 
-                        // Merge headers from behaviorHints (addon-specific headers)
+                        // Merge headers from behaviorHints (same as reference)
                         if (bh.proxyHeaders && bh.proxyHeaders.request) {
                             headers = Object.assign(headers, bh.proxyHeaders.request);
                         } else if (bh.headers) {
                             headers = Object.assign(headers, bh.headers);
                         }
 
-                        // Add Origin header for streaming protocols (HLS/DASH)
+                        // Add Origin header for HLS/DASH
                         if (stream.url.indexOf(".m3u8") !== -1 || stream.url.indexOf(".mpd") !== -1) {
                             if (!headers["Origin"]) {
                                 try {
@@ -554,10 +614,15 @@
                             });
                         }
 
+                        // Build full source label with quality
+                        var fullSource = addonName;
+                        if (quality !== "Auto") fullSource += " " + quality;
+                        if (title) fullSource += " - " + title;
+
                         streams.push(new StreamResult({
                             url: stream.url,
                             quality: quality,
-                            source: addonName + " " + quality,
+                            source: fullSource,
                             title: title,
                             headers: headers,
                             subtitles: subtitles,
@@ -565,40 +630,48 @@
                             cached: stream.cached || false,
                             size: stream.size || null
                         }));
-                        return;
+                        continue;
                     }
 
                     // --- 2) TORRENT STREAMS (infoHash) ---
-                    // SkyStream needs infoHash + fileIndex as DIRECT properties on StreamResult
+                    // Build magnet URL with trackers (same approach as reference)
                     if (stream.infoHash) {
                         var infoHash = stream.infoHash;
                         var fileIdx = stream.fileIdx !== undefined ? stream.fileIdx : 0;
 
-                        // Build magnet URL with trackers
+                        // Build magnet URL
                         var magnetUrl = "magnet:?xt=urn:btih:" + infoHash;
+
+                        // Add source trackers (with "tracker:" prefix handling, same as reference)
                         if (stream.sources && Array.isArray(stream.sources)) {
-                            stream.sources.forEach(function(tr) {
-                                magnetUrl += "&tr=" + encodeURIComponent(tr);
-                            });
-                        }
-                        // Add default public trackers as fallback
-                        if (!stream.sources || stream.sources.length === 0) {
-                            var defaultTrackers = [
-                                "udp://tracker.opentrackr.org:1337/announce",
-                                "udp://tracker.openbittorrent.com:6969/announce",
-                                "udp://tracker.torrent.eu.org:451/announce",
-                                "udp://public.popcorn-tracker.org:6969/announce",
-                                "udp://exodus.desync.com:6969/announce"
-                            ];
-                            defaultTrackers.forEach(function(tr) {
-                                magnetUrl += "&tr=" + encodeURIComponent(tr);
-                            });
+                            for (var t = 0; t < stream.sources.length; t++) {
+                                var src = stream.sources[t];
+                                // Handle "tracker:udp://..." format (Stremio convention)
+                                if (src.indexOf("tracker:") === 0) {
+                                    var trackerUrl = src.substring("tracker:".length);
+                                    if (trackerUrl.length > 0) {
+                                        magnetUrl += "&tr=" + encodeURIComponent(trackerUrl);
+                                    }
+                                } else {
+                                    magnetUrl += "&tr=" + encodeURIComponent(src);
+                                }
+                            }
                         }
 
-                        // Shared props for all torrent stream formats
+                        // Add trackers from GitHub master tracker list (same as reference)
+                        var trackers = await getTrackers();
+                        for (var t2 = 0; t2 < trackers.length; t2++) {
+                            magnetUrl += "&tr=" + encodeURIComponent(trackers[t2]);
+                        }
+
+                        // Full source label
+                        var torrentSource = addonName;
+                        if (quality !== "Auto") torrentSource += " " + quality;
+                        if (title) torrentSource += " - " + title;
+
                         var torrentProps = {
                             quality: quality,
-                            source: addonName + " " + quality,
+                            source: torrentSource,
                             title: title,
                             headers: { "User-Agent": USER_AGENT, "Referer": addonUrl + "/" },
                             infoHash: infoHash,
@@ -608,18 +681,11 @@
                             behaviorHints: stream.behaviorHints || { notWebReady: true }
                         };
 
-                        // Format 1: SkyStream-native torrent format (torrent:infoHash:fileIdx)
+                        // Magnet URL (primary format)
                         streams.push(new StreamResult(Object.assign({}, torrentProps, {
-                            url: "torrent:" + infoHash + ":" + fileIdx
+                            url: magnetUrl
                         })));
-
-                        // Format 2: Magnet URL with trackers (for external clients)
-                        if (magnetUrl.length > 20) {
-                            streams.push(new StreamResult(Object.assign({}, torrentProps, {
-                                url: magnetUrl
-                            })));
-                        }
-                        return;
+                        continue;
                     }
 
                     // --- 3) YOUTUBE EMBEDS ---
@@ -631,17 +697,29 @@
                             headers: { "Referer": "https://www.youtube.com/", "User-Agent": USER_AGENT },
                             behaviorHints: { notWebReady: true }
                         }));
-                        return;
+                        continue;
                     }
 
-                    // --- 4) FALLBACK: Magnet URL or other format ---
-                    // Try to extract infoHash from magnet URLs if present
+                    // --- 4) EXTERNAL URL (Stremio protocol: stream.externalUrl) ---
+                    // Some addons return externalUrl for streams hosted on external sites
+                    if (stream.externalUrl) {
+                        streams.push(new StreamResult({
+                            url: stream.externalUrl,
+                            quality: quality,
+                            source: addonName + " External",
+                            title: title,
+                            headers: { "User-Agent": USER_AGENT, "Referer": addonUrl + "/" },
+                            behaviorHints: stream.behaviorHints || { notWebReady: true }
+                        }));
+                        continue;
+                    }
+
+                    // --- 5) FALLBACK: Any other URL format (magnet, etc.) ---
                     if (stream.url) {
                         var fallbackUrl = stream.url;
                         var fallbackInfoHash = null;
-                        var fallbackFileIdx = 0;
 
-                        // Check if URL is a magnet link and extract infoHash
+                        // Try to extract infoHash from magnet URLs
                         if (fallbackUrl.indexOf("magnet:?xt=urn:btih:") === 0) {
                             var match = fallbackUrl.match(/urn:btih:([a-fA-F0-9]+)/);
                             if (match) {
@@ -649,7 +727,7 @@
                             }
                         }
 
-                        var streamResultProps = {
+                        var fallbackProps = {
                             url: fallbackUrl,
                             quality: quality,
                             source: addonName + " " + (stream.name || ""),
@@ -658,18 +736,17 @@
                             behaviorHints: stream.behaviorHints || undefined
                         };
 
-                        // Add infoHash/fileIndex if extracted from magnet URL
                         if (fallbackInfoHash) {
-                            streamResultProps.infoHash = fallbackInfoHash;
-                            streamResultProps.fileIndex = fallbackFileIdx;
+                            fallbackProps.infoHash = fallbackInfoHash;
+                            fallbackProps.fileIndex = 0;
                         }
 
-                        streams.push(new StreamResult(streamResultProps));
+                        streams.push(new StreamResult(fallbackProps));
                     }
-                });
+                }
             }
 
-            // Deduplicate streams by URL (keep first occurrence = best quality order)
+            // Deduplicate streams by URL (keep first occurrence)
             var seen = {};
             streams = streams.filter(function(s) {
                 var key = s.url;
@@ -678,7 +755,7 @@
                 return true;
             });
 
-            // Sort by quality (highest first): 4K > 2160p > 1440p > 1080p > 720p > 480p > 360p > Auto > YouTube
+            // Sort by quality (highest first)
             streams.sort(function(a, b) {
                 var qMap = { "4K": 0, "2160p": 0, "1440p": 1, "1080p": 2, "720p": 3, "480p": 4, "360p": 5, "Auto": 6, "YouTube": 7 };
                 var aQ = qMap[a.quality] || 6;
@@ -686,8 +763,6 @@
                 return aQ - bQ;
             });
 
-            // If no streams found, return empty array rather than fake entry
-            // SkyStream will show "No streams available" natively
             cb({ success: true, data: streams });
         } catch (e) {
             console.error("loadStreams error:", e.message);
@@ -695,7 +770,7 @@
         }
     }
 
-    // --- Helper Functions ---
+    // === Helper Functions ===
 
     function extractQuality(str) {
         if (!str) return "Auto";
@@ -723,7 +798,7 @@
         return str.indexOf("http://") === 0 || str.indexOf("https://") === 0;
     }
 
-    // --- Export Functions ---
+    // === Export Functions ===
     globalThis.getHome = getHome;
     globalThis.search = search;
     globalThis.load = load;
