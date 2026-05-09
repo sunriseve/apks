@@ -44,7 +44,9 @@
             return channelsCache;
         }
 
-        // Try primary endpoint (jiotv2.json — has working MPD URLs)
+        var allChannels = [];
+
+        // Try primary endpoint (jiotv2.json — 24 sports channels with working MPD URLs)
         try {
             var resp = await http_get(API_PRIMARY, COMMON_HEADERS);
             var data = parseJsonSafe(resp.body, null);
@@ -56,22 +58,18 @@
                         name:   clean(ch.channel_name),
                         logo:   clean(ch.channel_logo),
                         url:    clean(ch.channel_url),
-                        genre:  clean(ch.channel_genre || ch.channel_category || 'Uncategorized'),
+                        genre:  clean(ch.channel_genre || ch.channel_category || 'Sports'),
                         keyId:  clean(ch.keyId),
                         key:    clean(ch.key),
                         cookie: clean(ch.cookie)
                     };
                 }).filter(function(ch) { return ch.name && ch.url; });
 
-                if (channels.length > 0) {
-                    channelsCache = channels;
-                    channelsCacheTime = now;
-                    return channels;
-                }
+                allChannels = allChannels.concat(channels);
             }
         } catch (_) {}
 
-        // Fallback: all_channels.json (1195 channels, may need URL construction)
+        // Fallback: all_channels.json (1195 channels across all genres)
         try {
             var resp2 = await http_get(API_FALLBACK, COMMON_HEADERS);
             var data2 = parseJsonSafe(resp2.body, null);
@@ -82,11 +80,12 @@
                     var constructedUrl = clean(ch.channel_url);
 
                     // If no direct URL, construct from cookie ACL path
-                    if (!constructedUrl) {
+                    if (!constructedUrl && cookie) {
                         var aclMatch = cookie.match(/acl=([^~&]+)/);
                         if (aclMatch) {
                             var aclPath = aclMatch[1].replace(/\*$/, '').replace(/\/$/, '');
                             if (aclPath && aclPath !== '/') {
+                                // Try both WDVLive and output paths
                                 constructedUrl = 'https://jiotvpllive.cdn.jio.com' + aclPath + '/index.mpd';
                             }
                         }
@@ -104,20 +103,45 @@
                     };
                 }).filter(function(ch) { return ch.name && ch.url; });
 
-                if (channels2.length > 0) {
-                    channelsCache = channels2;
-                    channelsCacheTime = now;
-                    return channels2;
-                }
+                // Deduplicate by channel ID (primary data takes precedence)
+                var seenIds = {};
+                allChannels.forEach(function(c) { seenIds[c.id] = true; });
+                channels2.forEach(function(c) {
+                    if (!seenIds[c.id]) {
+                        allChannels.push(c);
+                        seenIds[c.id] = true;
+                    }
+                });
             }
         } catch (_) {}
 
-        return [];
+        if (allChannels.length > 0) {
+            channelsCache = allChannels;
+            channelsCacheTime = now;
+        }
+
+        return allChannels;
     }
 
     // Encode channel data into a URL string for passing between functions
     function encodeChannel(ch) {
         return JSON.stringify({ kind: 'channel', channel: ch });
+    }
+
+    // ── Genre display mapping ────────────────────────────────────────────────────
+    function getGenreIcon(genre) {
+        var g = (genre || '').toLowerCase();
+        if (g.includes('sport')) return 'sports_soccer';
+        if (g.includes('news')) return 'news';
+        if (g.includes('movie')) return 'movie';
+        if (g.includes('entertain') || g.includes('comedy')) return 'tv';
+        if (g.includes('music')) return 'music_note';
+        if (g.includes('kids') || g.includes('child')) return 'child_care';
+        if (g.includes('devotion') || g.includes('religious') || g.includes('god')) return 'church';
+        if (g.includes('infotain') || g.includes('lifestyle')) return 'lightbulb';
+        if (g.includes('business')) return 'business';
+        if (g.includes('education') || g.includes('learning')) return 'school';
+        return 'live_tv';
     }
 
     // ── getHome ─────────────────────────────────────────────────────────────────
@@ -143,13 +167,32 @@
                 }));
             });
 
-            // Use first category as "Trending" for hero carousel
+            // Build ordered sections
+            var orderedSections = {};
+            var genrePriority = ['Sports', 'News', 'Movies', 'Entertainment', 'Music', 'Kids', 'Devotional', 'Infotainment', 'Business', 'Education', 'Uncategorized'];
+
+            // Add Trending section from most popular genre
             var keys = Object.keys(sections);
-            if (keys.length > 0 && !sections['Trending']) {
-                sections['Trending'] = sections[keys[0]].slice(0, 10);
+            if (keys.length > 0) {
+                var firstGenre = keys[0];
+                orderedSections['Trending'] = sections[firstGenre].slice(0, 15);
             }
 
-            cb({ success: true, data: sections });
+            // Add all genre sections in priority order
+            genrePriority.forEach(function(g) {
+                if (sections[g] && g !== keys[0]) {
+                    orderedSections[g] = sections[g];
+                }
+            });
+
+            // Add remaining genres not in priority list
+            keys.forEach(function(g) {
+                if (!orderedSections[g]) {
+                    orderedSections[g] = sections[g];
+                }
+            });
+
+            cb({ success: true, data: orderedSections });
         } catch (e) {
             cb({ success: false, errorCode: 'HOME_ERROR', message: String(e && e.message || e) });
         }
