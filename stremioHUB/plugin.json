@@ -1,7 +1,7 @@
 {
   "packageName": "dev.sunriseve.stremiohub",
   "name": "StremioHub",
-  "version": 1,
+  "version": 2,
   "baseUrl": "https://stremio-hub.local",
   "description": "Aggregated content hub from multiple Stremio add-ons. Add/remove manifest.json URLs to configure sources. First addon = highest priority in getHome catalog.",
   "authors": ["sunriseve"],
@@ -14,6 +14,6 @@
     "https://streamio-hianime.onrender.com/manifest.json",
     "https://xclub-stremio.vercel.app/manifest.json",
     "https://hentaistream-addon.keypop3750.workers.dev/manifest.json",
-    "https://yomi.ruka.pw/manifest.json"
+    "https://yomi.ruka.pw/%7B%22Yomi%22%3A%22eyJ1c2VFbmdsaXNoVGl0bGVzIjp0cnVlLCJzaG93TGF0ZXN0Ijp0cnVlLCJzaG93VHJlbmRpbmciOnRydWUsInNob3dUb3AiOnRydWUsImhpZGVVbmNhY2hlZCI6ZmFsc2UsInJlc29sdXRpb25zIjpbXSwiZW5hYmxlUDJQIjp0cnVlfQ%22%7D/manifest.json"
   ]
 }
