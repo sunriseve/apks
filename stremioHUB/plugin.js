@@ -552,22 +552,30 @@
             var season = decoded.s;
             var episode = decoded.e;
 
-            // Build stream URL based on Stremio protocol
-            var streamUrl;
+            var addonName = extractSourceName(addonUrl);
+            var rawStreams = [];
+
+            // Try multiple stream URL formats for maximum compatibility:
+            // Format 1 (standard): /stream/{type}/{id}.json - uses video/episode ID directly
+            // Format 2 (fallback): /stream/{type}/{id}:{season}:{episode}.json - colon-separated
+            var urlsToTry = [addonUrl + "/stream/" + type + "/" + encodeURIComponent(id) + ".json"];
             if ((type === "series" || type === "anime" || type === "hentai") && season > 0 && episode > 0) {
-                streamUrl = addonUrl + "/stream/" + type + "/" + encodeURIComponent(id) + ":" + season + ":" + episode + ".json";
-            } else {
-                streamUrl = addonUrl + "/stream/" + type + "/" + encodeURIComponent(id) + ".json";
+                urlsToTry.push(addonUrl + "/stream/" + type + "/" + encodeURIComponent(id) + ":" + season + ":" + episode + ".json");
             }
 
-            var data = await fetchJsonSafe(streamUrl, HEADERS);
-            var streams = [];
-            var addonName = extractSourceName(addonUrl);
+            for (var ui = 0; ui < urlsToTry.length; ui++) {
+                var streamData = await fetchJsonSafe(urlsToTry[ui], HEADERS);
+                if (streamData && streamData.streams && Array.isArray(streamData.streams) && streamData.streams.length > 0) {
+                    rawStreams = streamData.streams;
+                    break;
+                }
+            }
 
-            if (data && data.streams && Array.isArray(data.streams)) {
-                // Process each stream from the addon
-                for (var s = 0; s < data.streams.length; s++) {
-                    var stream = data.streams[s];
+            var streams = [];
+
+            // Process each stream from the addon
+            for (var s = 0; s < rawStreams.length; s++) {
+                var stream = rawStreams[s];
 
                     // Combine source name from name, title, description (same as reference)
                     var pName = stream.name ? stream.name.replace(/\n/g, " ") : "";
@@ -744,7 +752,6 @@
                         streams.push(new StreamResult(fallbackProps));
                     }
                 }
-            }
 
             // Deduplicate streams by URL (keep first occurrence)
             var seen = {};
