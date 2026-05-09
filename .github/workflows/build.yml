@@ -1,0 +1,59 @@
+name: Build and Deploy Repository
+
+on:
+  push:
+    branches: [ main ]
+    paths-ignore:
+      - 'dist/**'
+      - 'README.md'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Generate Repository Manifest
+        run: |
+          cat > repo.json <<'JSON'
+          {
+            "name": "applications based",
+            "packageName": "sky.delta",
+            "description": "SkyStream plugins repository",
+            "manifestVersion": 1,
+            "pluginLists": []
+          }
+          JSON
+
+      - name: Deploy Repository
+        run: |
+          npm install -g skystream-cli
+          # Deploy using the 'repo' branch URL as base
+          skystream deploy -u https://raw.githubusercontent.com/${{ github.repository }}/repo
+
+      - name: Prepare Repo Branch Files
+        run: |
+          mkdir -p deploy
+          cp -r dist deploy/
+          cp repo.json deploy/
+
+      - name: Push to repo branch
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: repo
+          publish_dir: ./deploy
+          force_orphan: false # Set to true if you want to clear the branch history every time
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'
+          commit_message: 'chore: automated deploy to repo branch [skip ci]'
