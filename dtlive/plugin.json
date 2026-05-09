@@ -1,0 +1,10 @@
+{
+  "packageName": "dev.skystream.dtlive",
+  "name": "DTV LIVE",
+  "version": 1,
+  "baseUrl": "https://my-api-5e7.pages.dev",
+  "description": "DTV LIVE - Live TV channels from JioTV+ platform. Sports, News, Movies, Entertainment, Devotional, Music & more with Clearkey DRM support.",
+  "authors": ["SkyStream Community"],
+  "languages": ["en", "hi"],
+  "categories": ["Live TV", "Sports", "News", "Movies", "Entertainment", "Devotional", "Music", "Kids"]
+}
