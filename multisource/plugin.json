@@ -1,0 +1,13 @@
+{
+  "packageName": "dev.sunriseve.multisource",
+  "name": "MultiSource",
+  "version": 1,
+  "baseUrl": "https://94c8cb9f702d-tmdb-addon.baby-beamup.club",
+  "description": "TMDB catalog + 14 video sources (vaplayer, ezvidapi, vidlink, videasy, vixsrc, cinesrc, cloudnestra, vidsrc.*, vidapi). Multi-source aggregation with auto-dedup.",
+  "authors": ["sunriseve"],
+  "languages": ["en"],
+  "categories": ["Movie", "TvSeries"],
+  "mirrors": [
+    "https://94c8cb9f702d-tmdb-addon.baby-beamup.club"
+  ]
+}
