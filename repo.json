@@ -1,0 +1,9 @@
+{
+  "name": "applications based",
+  "packageName": "sky.delta",
+  "description": "SkyStream plugins repository",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/sunriseve/apks/repo/dist/plugins.json"
+  ]
+}
