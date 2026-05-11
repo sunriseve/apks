@@ -1,6 +1,6 @@
 (function () {
   // ===========================================================================
-  // NUVIO BRIDGE — SkyStream Plugin v4.0
+  // NUVIO BRIDGE — SkyStream Plugin v4.5
   // Ultra-reliable universal bridge for 150+ Nuvio streaming providers.
   // Uses native http_get/http_post for maximum SkyStream compatibility.
   // ===========================================================================
@@ -49,12 +49,13 @@
   var IMG_BASE = 'https://image.tmdb.org/t/p';
 
   // --- Performance tunables ---
-  var FETCH_CODE_TIMEOUT   = 8000;   // ms to download a provider's JS
-  var PROVIDER_TIMEOUT     = 10000;  // ms for a provider's getStreams call
-  var BATCH_SIZE           = 10;     // providers per parallel batch
-  var EARLY_EXIT_STREAMS   = 30;     // stop once we have this many unique streams
+  var FETCH_CODE_TIMEOUT   = 5000;   // ms to download a provider's JS
+  var PROVIDER_TIMEOUT     = 7000;   // ms for a provider's getStreams call
+  var CODE_BATCH_SIZE      = 30;     // providers whose JS code we download in parallel
+  var STREAM_BATCH_SIZE    = 15;     // providers whose getStreams we call in parallel
+  var EARLY_EXIT_STREAMS   = 25;     // stop once we have this many unique streams
+  var MAX_RETRIES          = 1;      // retries for previously-successful providers
   var MAX_HOME_ITEMS       = 20;     // items per home category
-  var HOME_PARALLEL_FETCHES = 5;     // home categories fetched concurrently
 
   // ===========================================================================
   // STATE
@@ -169,6 +170,15 @@
     return fetchJson(TMDB_BASE + path + sep + 'api_key=' + TMDB_KEY, H_JSON);
   }
 
+  // httpGet with hard timeout (for provider code fetching — never hang)
+  function httpGetTimed(url, headers, ms) {
+    return new Promise(function (resolve) {
+      var done = false;
+      var timer = setTimeout(function () { if (!done) { done = true; resolve({ status: 0, body: '', error: new Error('timeout') }); } }, ms || 5000);
+      httpGet(url, headers).then(function (r) { if (!done) { done = true; clearTimeout(timer); resolve(r); } }).catch(function (e) { if (!done) { done = true; clearTimeout(timer); resolve({ status: 0, body: '', error: e }); } });
+    });
+  }
+
   // ===========================================================================
   // FETCH POLYFILL  (for provider code that uses global fetch())
   // ALWAYS installs — overrides any existing fetch with our http_get backend.
@@ -252,6 +262,26 @@
   if (typeof global === 'undefined') { globalThis.global = globalThis; }
   if (typeof window === 'undefined') { globalThis.window = globalThis; }
   if (typeof globalThis.self === 'undefined') { globalThis.self = globalThis; }
+
+  // Polyfill URLSearchParams for providers that use it (Castle, etc.)
+  if (typeof globalThis.URLSearchParams === 'undefined') {
+    globalThis.URLSearchParams = function (init) {
+      this._d = {};
+      if (typeof init === 'string') {
+        init.split('&').forEach(function (p) {
+          var kv = p.split('=');
+          if (kv.length >= 2) this._d[decodeURIComponent(kv[0])] = decodeURIComponent(kv.slice(1).join('='));
+        }.bind(this));
+      }
+      this.get = function (n) { return this._d[n] || null; };
+      this.set = function (n, v) { this._d[n] = String(v); };
+      this.toString = function () {
+        var parts = [];
+        for (var k in this._d) { if (this._d.hasOwnProperty(k)) parts.push(encodeURIComponent(k) + '=' + encodeURIComponent(this._d[k])); }
+        return parts.join('&');
+      };
+    };
+  }
 
   // ===========================================================================
   // TIMEOUT HELPER
@@ -429,72 +459,31 @@
   function loadProviderFn(provider) {
     if (_fnCache[provider.id]) return Promise.resolve(_fnCache[provider.id]);
 
-    return fetchText(provider.fileUrl, H_EXTERNAL).then(function (code) {
-      if (!code) { _fnCache[provider.id] = null; return null; }
+    return httpGetTimed(provider.fileUrl, H_EXTERNAL, FETCH_CODE_TIMEOUT).then(function (res) {
+      if (res.status === 0 || !res.body) { _fnCache[provider.id] = null; return null; }
+      var code = res.body.replace(/^["']use strict["'];?\s*/m, '');
 
-      // Strip "use strict"
-      code = code.replace(/^["']use strict["'];?\s*/m, '');
+      var fn = tryExecStrategy1(code)
+            || tryExecStrategy2(code)
+            || tryExecStrategy3(code);
 
-      var fn = tryExecStrategy1(code, provider.name)
-            || tryExecStrategy2(code, provider.name)
-            || tryExecStrategy3(code, provider.name);
-
-      if (fn) {
-        log('✓ ' + provider.name);
-        _fnCache[provider.id] = fn;
-        return fn;
-      }
-
-      log('✗ ' + provider.name);
-      _fnCache[provider.id] = null;
-      return null;
-    }).catch(function (e) {
-      log('Error loading ' + provider.name + ': ' + e.message);
-      _fnCache[provider.id] = null;
-      return null;
-    });
+      _fnCache[provider.id] = fn || null;
+      return fn || null;
+    }).catch(function () { _fnCache[provider.id] = null; return null; });
   }
 
-  function tryExecStrategy1(code, name) {
-    // Strategy 1: new Function with module wrapper
-    try {
-      var mod = { exports: {} };
-      var factory = new Function('return (function(module){' + code + '\nreturn module.exports;})')();
-      var exported = factory(mod);
-      if (exported && typeof exported.getStreams === 'function') return exported.getStreams;
-    } catch (e) {
-      // Silent
-    }
+  function tryExecStrategy1(code) {
+    try { var mod = { exports: {} }; var f = new Function('return (function(module){' + code + '\nreturn module.exports;})')(); var e = f(mod); if (e && typeof e.getStreams === 'function') return e.getStreams; } catch (e) {}
     return null;
   }
 
-  function tryExecStrategy2(code, name) {
-    // Strategy 2: indirect eval with inline module
-    try {
-      var src = '(function(){\nvar module={exports:{}};\nvar exports=module.exports;\n' + code + '\nreturn module.exports;\n})()';
-      var result = new Function('return ' + src)();
-      if (result && typeof result.getStreams === 'function') return result.getStreams;
-    } catch (e) {
-      // Silent
-    }
+  function tryExecStrategy2(code) {
+    try { var r = new Function('return (function(){var module={exports:{}},exports=module.exports;' + code + '\nreturn module.exports;})()')(); if (r && typeof r.getStreams === 'function') return r.getStreams; } catch (e) {}
     return null;
   }
 
-  function tryExecStrategy3(code, name) {
-    // Strategy 3: direct eval (last resort)
-    try {
-      var mod3 = { exports: {} };
-      (0, eval)('var module={exports:{}};var exports=module.exports;' + code);
-      if (typeof module !== 'undefined' && module.exports && typeof module.exports.getStreams === 'function') {
-        // Capture from non-strict eval leaking to global scope
-        // This is fragile but catches edge cases
-      }
-      var r = new Function('return (function(m){' + code + '\nreturn m.exports||{getStreams:function(){return[]}};})')();
-      var ex = r({ exports: {} });
-      if (ex && typeof ex.getStreams === 'function') return ex.getStreams;
-    } catch (e) {
-      // Silent
-    }
+  function tryExecStrategy3(code) {
+    try { var r = new Function('return (function(m){' + code + '\nreturn m.exports||{getStreams:function(){return[]}};})')(); var e = r({ exports: {} }); if (e && typeof e.getStreams === 'function') return e.getStreams; } catch (e) {}
     return null;
   }
 
@@ -542,62 +531,76 @@
 
       // Sort by score (reliable providers first)
       valid = sortByScore(valid);
-
       var allStreams = [];
+      var totalProviders = valid.length;
 
-      // Process in parallel batches with early exit
-      function processBatch(idx) {
-        if (idx >= valid.length || allStreams.length >= EARLY_EXIT_STREAMS) {
-          return deduplicate(allStreams).then(function (unique) {
-            var elapsed = (Date.now() - startTime) + 'ms';
-            log('Scraped ' + unique.length + ' streams from ' + valid.length + ' providers in ' + elapsed);
-            return unique;
-          });
-        }
+      // --- Phase 1: Load ALL provider code in parallel batches ---
+      log('Loading code for ' + totalProviders + ' providers...');
 
-        var batch = valid.slice(idx, idx + BATCH_SIZE);
-
-        return Promise.allSettled(batch.map(function (pr) {
-          return loadProviderFn(pr).then(function (fn) {
-            if (!fn) return [];
-            return callProvider(fn, tmdbId, mediaType, season, episode, pr.name).then(function (streams) {
-              if (!Array.isArray(streams) || streams.length === 0) return [];
-
-              // Score this provider for future queries
-              _providerScore[pr.id] = (_providerScore[pr.id] || 0) + streams.length;
-
-              // Map to StreamResult with provider name
-              return streams.map(function (s) {
-                if (!s || !s.url) return null;
-                if (!isPlayable(s.url) && (!s.headers || Object.keys(s.headers).length === 0)) return null;
-
-                var qual = s.quality || detectQuality(s.url, s.name) || 'Auto';
-                var label = pr.name;
-                if (qual && qual !== 'Auto') label += ' • ' + qual;
-                if (s.size) label += ' • ' + s.size;
-
-                return new StreamResult({
-                  url: s.url,
-                  name: pr.sourceName + ' › ' + pr.name + (s.name ? ' — ' + s.name : ''),
-                  source: label,
-                  quality: qual,
-                  headers: s.headers || {},
-                  subtitles: s.subtitles || undefined
-                });
-              }).filter(function (s) { return s !== null; });
-            });
-          });
-        })).then(function (results) {
-          results.forEach(function (r) {
-            if (r.status === 'fulfilled' && Array.isArray(r.value)) {
-              allStreams = allStreams.concat(r.value);
-            }
-          });
-          return processBatch(idx + BATCH_SIZE);
+      function loadCodeBatch(idx) {
+        if (idx >= valid.length) return Promise.resolve();
+        var batch = valid.slice(idx, idx + CODE_BATCH_SIZE);
+        return Promise.all(batch.map(function (pr) { return loadProviderFn(pr); })).then(function () {
+          return loadCodeBatch(idx + CODE_BATCH_SIZE);
         });
       }
 
-      return processBatch(0);
+      return loadCodeBatch(0).then(function () {
+        log('Code loaded. Fetching streams from providers...');
+
+        // --- Phase 2: Call getStreams in batches with early exit & retry ---
+        function streamBatch(idx) {
+          if (idx >= valid.length || allStreams.length >= EARLY_EXIT_STREAMS) {
+            return deduplicate(allStreams).then(function (unique) {
+              var elapsed = (Date.now() - startTime) + 'ms';
+              log('Scraped ' + unique.length + ' streams from ' + totalProviders + ' providers in ' + elapsed);
+              return unique;
+            });
+          }
+
+          var batch = valid.slice(idx, idx + STREAM_BATCH_SIZE);
+
+          return Promise.all(batch.map(function (pr) {
+            var fn = _fnCache[pr.id];
+            if (!fn) return Promise.resolve([]);
+
+            var retries = (_providerScore[pr.id] || 0) > 0 ? MAX_RETRIES : 0;
+
+            function tryCall(attempt) {
+              return callProvider(fn, tmdbId, mediaType, season, episode, pr.name).then(function (streams) {
+                if (streams.length === 0) {
+                  if (attempt < retries) return tryCall(attempt + 1);
+                  return [];
+                }
+                _providerScore[pr.id] = (_providerScore[pr.id] || 0) + streams.length;
+
+                return streams.map(function (s) {
+                  if (!s || !s.url) return null;
+                  if (!isPlayable(s.url) && (!s.headers || Object.keys(s.headers).length === 0)) return null;
+
+                  var qual = s.quality || detectQuality(s.url, s.name) || 'Auto';
+                  var label = pr.name;
+                  if (qual && qual !== 'Auto') label += ' • ' + qual;
+                  if (s.size) label += ' • ' + s.size;
+
+                  return {
+                    url: s.url,
+                    source: label,
+                    headers: s.headers || {},
+                    subtitles: s.subtitles || undefined
+                  };
+                }).filter(function (s) { return s !== null; });
+              });
+            }
+            return tryCall(0);
+          })).then(function (results) {
+            results.forEach(function (r) { if (Array.isArray(r)) allStreams = allStreams.concat(r); });
+            return streamBatch(idx + STREAM_BATCH_SIZE);
+          });
+        }
+
+        return streamBatch(0);
+      });
     });
   }
 
@@ -625,7 +628,7 @@
     var date = type === 'tv' ? d.first_air_date : d.release_date;
     var year = date ? parseInt(date.substring(0, 4), 10) : undefined;
 
-    return new MultimediaItem({
+    var item = {
       title: title || 'Unknown',
       url: makeItemUrl(d.id, type),
       posterUrl: imgUrl(d.poster_path),
@@ -637,7 +640,20 @@
       logoUrl: '',
       cast: [],
       trailers: []
-    });
+    };
+
+    // CRITICAL: SkyStream needs episodes array even for movies to show the play button
+    if (type === 'movie') {
+      item.episodes = [{
+        name: title || 'Movie',
+        url: makeItemUrl(d.id, 'movie'),
+        season: 1,
+        episode: 1,
+        posterUrl: imgUrl(d.poster_path)
+      }];
+    }
+
+    return item;
   }
 
   // ===========================================================================
@@ -830,5 +846,5 @@
   globalThis.load = load;
   globalThis.loadStreams = loadStreams;
 
-  log('Plugin v4 loaded — ' + NUVIO_SOURCES.length + ' Nuvio sources');
+  log('Plugin v4.5 loaded — ' + NUVIO_SOURCES.length + ' Nuvio sources');
 })();
