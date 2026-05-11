@@ -1,9 +1,9 @@
 {
   "packageName": "dev.sunriseve.NuvioBridge",
   "name": "Nuvio Bridge",
-  "version": 1,
+  "version": 3,
   "baseUrl": "https://api.themoviedb.org/3",
-  "description": "Universal bridge for 100+ Nuvio streaming providers. Add/remove Nuvio manifest URLs in the nuvioManifests array. Uses TMDB for metadata (search, browse, episode listing).",
+  "description": "Universal bridge for 150+ Nuvio streaming providers. Dynamic home with trending/popular/top-rated. Ultra-fast parallel stream scraping with smart caching.",
   "authors": ["sunriseve"],
   "languages": ["en", "hi", "ta", "te", "ml", "kn", "ar", "fr", "es", "pt", "ja", "ko", "zh", "de", "it", "pl", "tr"],
   "categories": ["Movie", "TvSeries", "Anime"],
@@ -13,6 +13,7 @@
     "https://raw.githubusercontent.com/phisher98/phisher-nuvio-providers/refs/heads/main/manifest.json",
     "https://raw.githubusercontent.com/michat88/nuvio-providers/refs/heads/main/manifest.json",
     "https://raw.githubusercontent.com/PirateZoro9/nuvio-kabir-providers/refs/heads/main/manifest.json",
-    "https://raw.githubusercontent.com/hihihihihiiray/plugins/refs/heads/main/manifest.json"
+    "https://raw.githubusercontent.com/hihihihihiiray/plugins/refs/heads/main/manifest.json",
+    "https://raw.githubusercontent.com/Abinanthankv/NuvioRepo/refs/heads/master/manifest.json"
   ]
 }
