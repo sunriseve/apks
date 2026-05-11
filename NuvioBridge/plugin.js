@@ -49,10 +49,9 @@
   var IMG_BASE = 'https://image.tmdb.org/t/p';
 
   // --- Performance tunables ---
-  var FETCH_CODE_TIMEOUT   = 5000;   // ms to download a provider's JS
-  var PROVIDER_TIMEOUT     = 7000;   // ms for a provider's getStreams call
-  var CODE_BATCH_SIZE      = 30;     // providers whose JS code we download in parallel
-  var STREAM_BATCH_SIZE    = 15;     // providers whose getStreams we call in parallel
+  var FETCH_CODE_TIMEOUT   = 4000;   // ms to download a provider's JS
+  var PROVIDER_TIMEOUT     = 6000;   // ms for a provider's getStreams call
+  var BATCH_SIZE           = 20;     // providers per combined batch (load code + call streams)
   var EARLY_EXIT_STREAMS   = 25;     // stop once we have this many unique streams
   var MAX_RETRIES          = 1;      // retries for previously-successful providers
   var MAX_HOME_ITEMS       = 20;     // items per home category
@@ -379,16 +378,28 @@
 
   function isPlayable(url) {
     if (!url) return false;
-    var u = url.toLowerCase();
+    if (typeof url !== 'string' || url.length < 5) return false;
+    var u = url.toLowerCase().trim();
+
+    // Direct video file extensions
     if (u.indexOf('.m3u8') >= 0 || u.indexOf('.m3u') >= 0) return true;
     if (u.indexOf('.mp4') >= 0) return true;
     if (u.indexOf('.mkv') >= 0) return true;
     if (u.indexOf('.webm') >= 0) return true;
+    if (u.indexOf('.mpd') >= 0) return true;
+
+    // HLS / DASH paths
     if (u.indexOf('/hls/') >= 0) return true;
-    if (u.indexOf('.mpd') >= 0 || (u.indexOf('manifest') >= 0 && u.indexOf('.mpd') >= 0)) return true;
+    if (u.indexOf('/dash/') >= 0) return true;
+
+    // Must be http(s) — skip null, javascript:, data:, blob: etc
+    if (u.indexOf('http://') !== 0 && u.indexOf('https://') !== 0) return false;
+
+    // Embed domains that resolve to video players
     for (var i = 0; i < EMBED_DOMAINS.length; i++) {
       if (u.indexOf(EMBED_DOMAINS[i]) >= 0) return true;
     }
+
     return false;
   }
 
@@ -532,75 +543,76 @@
       // Sort by score (reliable providers first)
       valid = sortByScore(valid);
       var allStreams = [];
-      var totalProviders = valid.length;
 
-      // --- Phase 1: Load ALL provider code in parallel batches ---
-      log('Loading code for ' + totalProviders + ' providers...');
+      // Process in parallel batches: load code + call streams together
+      // This gives FASTER perceived speed — first batch returns immediately
+      function processBatch(idx) {
+        if (idx >= valid.length || allStreams.length >= EARLY_EXIT_STREAMS) {
+          return deduplicate(allStreams).then(function (unique) {
+            log('Scraped ' + unique.length + ' streams from ' + valid.length + ' providers in ' + (Date.now() - startTime) + 'ms');
+            return unique;
+          });
+        }
 
-      function loadCodeBatch(idx) {
-        if (idx >= valid.length) return Promise.resolve();
-        var batch = valid.slice(idx, idx + CODE_BATCH_SIZE);
-        return Promise.all(batch.map(function (pr) { return loadProviderFn(pr); })).then(function () {
-          return loadCodeBatch(idx + CODE_BATCH_SIZE);
-        });
-      }
+        var batch = valid.slice(idx, idx + BATCH_SIZE);
 
-      return loadCodeBatch(0).then(function () {
-        log('Code loaded. Fetching streams from providers...');
-
-        // --- Phase 2: Call getStreams in batches with early exit & retry ---
-        function streamBatch(idx) {
-          if (idx >= valid.length || allStreams.length >= EARLY_EXIT_STREAMS) {
-            return deduplicate(allStreams).then(function (unique) {
-              var elapsed = (Date.now() - startTime) + 'ms';
-              log('Scraped ' + unique.length + ' streams from ' + totalProviders + ' providers in ' + elapsed);
-              return unique;
-            });
-          }
-
-          var batch = valid.slice(idx, idx + STREAM_BATCH_SIZE);
-
-          return Promise.all(batch.map(function (pr) {
-            var fn = _fnCache[pr.id];
-            if (!fn) return Promise.resolve([]);
+        // Load code AND call streams in parallel for this batch
+        return Promise.all(batch.map(function (pr) {
+          return loadProviderFn(pr).then(function (fn) {
+            if (!fn) return [];
 
             var retries = (_providerScore[pr.id] || 0) > 0 ? MAX_RETRIES : 0;
+            var attempt = 0;
 
-            function tryCall(attempt) {
+            function tryCall() {
               return callProvider(fn, tmdbId, mediaType, season, episode, pr.name).then(function (streams) {
-                if (streams.length === 0) {
-                  if (attempt < retries) return tryCall(attempt + 1);
+                if (!Array.isArray(streams) || streams.length === 0) {
+                  attempt++;
+                  if (attempt <= retries) return tryCall();
                   return [];
                 }
                 _providerScore[pr.id] = (_providerScore[pr.id] || 0) + streams.length;
 
                 return streams.map(function (s) {
                   if (!s || !s.url) return null;
-                  if (!isPlayable(s.url) && (!s.headers || Object.keys(s.headers).length === 0)) return null;
+                  if (!isPlayable(s.url)) {
+                    if (!s.headers || typeof s.headers !== 'object' || Object.keys(s.headers).length === 0) return null;
+                  }
 
-                  var qual = s.quality || detectQuality(s.url, s.name) || 'Auto';
+                  var qual = s.quality || detectQuality(s.url, s.name || s.title) || null;
                   var label = pr.name;
-                  if (qual && qual !== 'Auto') label += ' • ' + qual;
-                  if (s.size) label += ' • ' + s.size;
+                  if (qual) label += ' \u2022 ' + qual;
+                  if (s.size) label += ' \u2022 ' + s.size;
 
-                  return {
-                    url: s.url,
-                    source: label,
-                    headers: s.headers || {},
-                    subtitles: s.subtitles || undefined
-                  };
+                  var subs = undefined;
+                  if (s.subtitles && Array.isArray(s.subtitles) && s.subtitles.length > 0) subs = s.subtitles;
+                  else if (s.subs && Array.isArray(s.subs) && s.subs.length > 0) subs = s.subs;
+
+                  var result = { url: s.url, source: label, headers: s.headers || {} };
+                  if (subs) result.subtitles = subs;
+                  if (qual) result.quality = qual;
+                  return result;
                 }).filter(function (s) { return s !== null; });
               });
             }
-            return tryCall(0);
-          })).then(function (results) {
-            results.forEach(function (r) { if (Array.isArray(r)) allStreams = allStreams.concat(r); });
-            return streamBatch(idx + STREAM_BATCH_SIZE);
+            return tryCall();
           });
-        }
+        })).then(function (results) {
+          results.forEach(function (r) {
+            if (Array.isArray(r)) {
+              // Don't concat empty arrays to avoid growing allStreams unnecessarily
+              if (r.length > 0) allStreams = allStreams.concat(r);
+              // Early exit check after adding streams
+              if (allStreams.length >= EARLY_EXIT_STREAMS) {
+                // Still need to process remaining batches to deduplicate
+              }
+            }
+          });
+          return processBatch(idx + BATCH_SIZE);
+        });
+      }
 
-        return streamBatch(0);
-      });
+      return processBatch(0);
     });
   }
 
