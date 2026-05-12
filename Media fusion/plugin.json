@@ -1,14 +1,14 @@
 {
   "packageName": "dev.sunriseve.Mediafusion",
   "name": "MediaFusion",
-  "version": 3,
+  "version": "3",
   "baseUrl": "https://stremio-hub.local",
-  "description": "Refined NSFW Addon Aggregator v3 - Fixed search across ALL addons (not just search-declared ones), TMDB fallback, rich quality parsing, subtitle normalization, stream caching. Catalogs from all configured addons shown as dashboard sections.",
+  "description": "Refined TMDB fallback, rich quality parsing, subtitle normalization, stream caching. Catalogs from all configured addons shown as dashboard sections.",
   "authors": ["sunriseve"],
   "languages": ["en"],
   "categories": ["Movies", "Anime", "Adult"],
   "isAdult": true,
   "addons": [
-    "https://mediafusion.elfhosted.com/D-BgvYOjurcma6kjaY8UpEobMgYa3gvWCvHQpyVSUE3nHfq9ZT0wGYQ2cck2JuyVsSCKRVS7wgxJSGZ3NIgxks7jAuEiCKhUTUaM0MFqKM3Cv26DxtLLNpJrJ6gjoI6azKDVjX31VI4T4b_LldN241zABbOxmN1Ud-_ziVQ71KpOhDp0z219rLsUpewWAIp-mSykOorqxD-148f19aaY_zhelEOQ0oxNQnzMwOMSiAITd0DKhSTLv6h4AqcrC_Lai7vF7oku3jSTXpeBL3u7axC_BLRlpVuINot4OgebJYWj_AKPp42SKx-NB_SzUa_y6qiNYWWjKXQY0r3hdAJ5L5Fo2b0jUXnzYhfDFAVpP5IJFs5ttdP-aVcMa9BxLuRnWpo80XkxfOXFAZq18BCx5tQtPgSsQ-VCHKOhU4hn2TwJZ3p5SUkcqbij2FNZWeiXJmGKSgxXgt1lmHfmd6c4wBlqzWVnBZI4y-NgutgI8R_EnZehH3xvQE1j5h79ZnxaDwmFvcqv3qS2Uk0jCylkOJZ5oedmLoTqsrnROMmHXzQWwkTLjQXU5dcFRuAJYVmjJVjiG5UGXzA5jRJL85Xq_dgiL08yz9zFDGyazbButFaUX41_uGJEFFEhFLznzcln9mv4Tj9R7d9_ES9MqYlKuQxFGrEUR8HgBvicAZ5FfxhTkAS4lx7QraShSUfxQYzToyjz1oFdXpkBoZU_hMqeS2-TlHlDeTUtfZoMIkqnDjGiVlDSBG_fO7lHAWvkc-Cwq627cBE0gM_UlZjYUO1KaLXlsh-fo08siiPUChxVvQ631yPusMSAblTjQq7Gw60o2RdD8aQsL-yeCCd3yrWkQuuu0Y_BLWYmhYi-jpjnLQqu-RGrCFScI-blDvrzL-1qjmtzohWZtQB-9DfftWZc8Xlv63Zw7BZTfchXaDyWzl91qKgu19T74EuCdOR4wah3nfO9gwdpZqaqx0kregUwsnHhfRsClZRLRh2HofxQ1gzjixHVC557FlKHKAEMJCmuXQVrsc2-phlH_ayuS3VOfuT0FlNoxntyWCty8BFuWPaCZUzoahKy_GU-XCveWKbz9ZXYo_KbnQjYnazsLerD8l_WAVni0fQYnHiFw8C2mX_gW1F5z1MALq24yANvXGu79I2EOZ8qK-QevLcgwdHbicajTuGJ3X88O4Kyxvf3Za_ZhVuHciS7bHHR4LOhDCwkLoip-P_mvKunw4Oo998C_EAX31EGTCS4yFyuHlq8r9M-bPSGBOK7bXbOzodM3e_n1Fx1DBhkKRoDtMf6FcJHPzaS84cMBQMzG1hewktgnE6MtfHMts3C770OeMoaGt_am8dh-7euJf9faGH2XyINksig/manifest.json"
+    "myurl.json"
   ]
 }
