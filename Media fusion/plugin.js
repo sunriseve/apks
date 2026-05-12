@@ -154,7 +154,9 @@
     //  ADDON MANAGEMENT
     // ============================================================
     function getAddonUrls() {
-        if (ADDON_URLS && ADDON_URLS.length > 0) return ADDON_URLS;
+        if (typeof ADDON_URLS !== "undefined" && ADDON_URLS.length > 0) {
+            return ADDON_URLS;
+        }
         var urls = [];
         if (manifest && manifest.addons && Array.isArray(manifest.addons)) {
             manifest.addons.forEach(function(url) {
