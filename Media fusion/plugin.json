@@ -1,0 +1,19 @@
+{
+  "packageName": "dev.sunriseve.Mediafusion",
+  "name": "MediaFusion",
+  "version": 3,
+  "baseUrl": "https://stremio-hub.local",
+  "description": "Refined NSFW Addon Aggregator v3 - Fixed search across ALL addons (not just search-declared ones), TMDB fallback, rich quality parsing, subtitle normalization, stream caching. Catalogs from all configured addons shown as dashboard sections.",
+  "authors": ["sunriseve"],
+  "languages": ["en"],
+  "categories": ["Movies", "Anime", "Adult"],
+  "isAdult": true,
+  "addons": [
+    "https://dirty-pink.ers.pw/manifest.json",
+    "https://07b88951aaab-jaxxx-v2.baby-beamup.club/manifest.json",
+    "https://streamio-hianime.onrender.com/manifest.json",
+    "https://xclub-stremio.vercel.app/manifest.json",
+    "https://hentaistream-addon.keypop3750.workers.dev/manifest.json",
+    "https://yomi.ruka.pw/%7B%22Yomi%22%3A%22eyJ1c2VFbmdsaXNoVGl0bGVzIjp0cnVlLCJzaG93TGF0ZXN0Ijp0cnVlLCJzaG93VHJlbmRpbmciOnRydWUsInNob3dUb3AiOnRydWUsImhpZGVVbmNhY2hlZCI6ZmFsc2UsInJlc29sdXRpb25zIjpbXSwiZW5hYmxlUDJQIjp0cnVlfQ%22%7D/manifest.json"
+  ]
+}
