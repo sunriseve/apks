@@ -90,6 +90,45 @@
     "url": "https://raw.githubusercontent.com/sunriseve/apks/repo/dist/dev.sunriseve.StreamioAddon.sky"
   },
   {
+    "packageName": "dev.beetv.plugin",
+    "name": "BeeTV",
+    "version": 1,
+    "baseUrl": "https://api.themoviedb.org/3",
+    "description": "BeeTV - Watch Movies & TV Shows. Powered by TMDB with multi-source streaming support including VidSrc, Embed.su, VidLink, and 30+ video sources. Features Trending, Airing Today, Top Rated, and genre categories updated daily.",
+    "authors": [
+      "BeeTV Team"
+    ],
+    "languages": [
+      "en",
+      "es",
+      "fr",
+      "de",
+      "ja",
+      "ko",
+      "zh",
+      "ru",
+      "hi",
+      "ta",
+      "te"
+    ],
+    "categories": [
+      "Movies",
+      "TV",
+      "Anime"
+    ],
+    "domains": [
+      {
+        "name": "TMDB API",
+        "url": "https://api.themoviedb.org/3"
+      },
+      {
+        "name": "TMDB Mirror",
+        "url": "https://api.tmdb.org/3"
+      }
+    ],
+    "url": "https://raw.githubusercontent.com/sunriseve/apks/repo/dist/dev.beetv.plugin.sky"
+  },
+  {
     "packageName": "dev.sunriseve.multisource",
     "name": "MultiSource",
     "version": 1,
