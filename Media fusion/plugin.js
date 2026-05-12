@@ -154,16 +154,7 @@
     //  ADDON MANAGEMENT
     // ============================================================
     function getAddonUrls() {
-        if (typeof ADDON_URLS !== "undefined" && ADDON_URLS.length > 0) {
-            return ADDON_URLS;
-        }
-        var urls = [];
-        if (manifest && manifest.addons && Array.isArray(manifest.addons)) {
-            manifest.addons.forEach(function(url) {
-                if (url && typeof url === "string" && url.trim().length > 0) urls.push(url.trim());
-            });
-        }
-        return urls;
+        return ADDON_URLS;
     }
 
     /**
