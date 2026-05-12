@@ -20,26 +20,6 @@
     "url": "https://raw.githubusercontent.com/sunriseve/apks/repo/dist/dev.sunriseve.Mediafusion.sky"
   },
   {
-    "packageName": "dev.sunriseve.Mediafusion",
-    "name": "MediaFusion",
-    "version": "3",
-    "baseUrl": "https://stremio-hub.local",
-    "description": "Refined TMDB fallback, rich quality parsing, subtitle normalization, stream caching. Catalogs from all configured addons shown as dashboard sections.",
-    "authors": [
-      "sunriseve"
-    ],
-    "languages": [
-      "en"
-    ],
-    "categories": [
-      "Movies",
-      "Anime",
-      "Adult"
-    ],
-    "isAdult": true,
-    "url": "https://raw.githubusercontent.com/sunriseve/apks/repo/dist/dev.sunriseve.Mediafusion.sky"
-  },
-  {
     "packageName": "dev.sunriseve.NuvioBridge",
     "name": "Nuvio Bridge",
     "version": 3,
